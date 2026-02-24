@@ -10,12 +10,16 @@ export const MODELS = {
 };
 
 export async function suggestStructure(library: BookmarkLibrary, userPrompt?: string) {
-  // Limit to first 200 bookmarks to prevent 500 errors on large files
-  const sampleBookmarks = library.bookmarks.slice(0, 200).map(b => ({ 
-    id: b.id, 
-    title: b.title, 
-    url: b.url 
-  }));
+  // Extract domains and truncate titles to minimize payload size while maximizing bookmark count
+  const sampleBookmarks = library.bookmarks.slice(0, 150).map(b => {
+    let domain = b.url.substring(0, 50);
+    try { domain = new URL(b.url).hostname; } catch (e) {}
+    return { 
+      id: b.id, 
+      title: b.title.substring(0, 60), 
+      domain 
+    };
+  });
 
   const response = await ai.models.generateContent({
     model: MODELS.SEARCH,
@@ -23,18 +27,22 @@ export async function suggestStructure(library: BookmarkLibrary, userPrompt?: st
       {
         role: "user",
         parts: [{
-          text: `Analyze these bookmarks and architect a deep, hierarchical folder structure. 
-          Sort these bookmarks into the most appropriate folders.
+          text: `You are an expert data architect. Transform this chaotic list of bookmarks into a pristine, logical folder hierarchy.
+          
+          Tasks:
+          1. Group by clear, broad semantic themes (e.g., 'Development', 'Design', 'Finance', 'Reading').
+          2. Identify likely dead, obsolete, or temporary links (e.g., localhost, test domains) and place them in an 'Archive' folder.
+          3. Sort EVERY provided bookmark into the most appropriate folder.
           
           Bookmarks to sort:
           ${JSON.stringify(sampleBookmarks)}
           
-          ${userPrompt ? `User Request: ${userPrompt}` : ""}
+          ${userPrompt ? `User Refinement Request: ${userPrompt}` : ""}
           
           Return a JSON object with:
           1. 'folders': An array of objects with 'path' (e.g., "Work/Projects/AI") and 'description'.
           2. 'assignments': An array of objects with 'bookmarkId' and 'folderPath'.
-          3. 'reasoning': A brief explanation.`
+          3. 'reasoning': A brief explanation of the transformation.`
         }]
       }
     ],

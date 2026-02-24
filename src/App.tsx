@@ -3,29 +3,25 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
-  Upload, 
-  Folder as FolderIcon, 
-  Link as LinkIcon, 
-  Download,
-  Terminal,
-  Sparkles,
-  Check,
-  X
+  Upload, Folder as FolderIcon, Link as LinkIcon, Download,
+  Terminal, Sparkles, Check, X, RefreshCw, Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { parseBookmarksHTML, exportToHTML, BookmarkLibrary, Folder } from './utils/bookmarkParser';
+import { parseBookmarksHTML, exportToHTML, BookmarkLibrary, Folder, Bookmark } from './utils/bookmarkParser';
 import { suggestStructure } from './services/gemini';
+
+type AppState = 'upload' | 'processing' | 'review' | 'final';
 
 const FolderPreview = ({ folder, depth }: { folder: any, depth: number }) => (
   <div className="space-y-1" style={{ marginLeft: `${depth * 16}px` }}>
-    <div className="py-2 px-3 rounded-md hover:bg-white/5 transition-colors flex items-center justify-between group">
+    <div className="py-2 px-3 rounded-md bg-white/[0.02] border border-border hover:bg-white/5 transition-colors flex items-center justify-between group">
       <div className="flex items-center gap-3">
-        <FolderIcon size={14} className="text-text-muted group-hover:text-accent transition-colors" />
+        <FolderIcon size={14} className="text-accent" />
         <span className="text-sm font-medium text-text-main">{folder.name}</span>
       </div>
-      <span className="text-[10px] font-mono text-text-muted">
+      <span className="text-[10px] font-mono text-text-muted bg-black/50 px-2 py-1 rounded-full">
         {folder.bookmarkCount || 0} items
       </span>
     </div>
@@ -36,93 +32,68 @@ const FolderPreview = ({ folder, depth }: { folder: any, depth: number }) => (
 );
 
 export default function App() {
+  const [appState, setAppState] = useState<AppState>('upload');
   const [library, setLibrary] = useState<BookmarkLibrary | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | undefined>(undefined);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [originalLibrary, setOriginalLibrary] = useState<BookmarkLibrary | null>(null);
+  const [originalStats, setOriginalStats] = useState({ total: 0, duplicates: 0 });
+  
   const [suggestion, setSuggestion] = useState<any>(null);
   const [previewTree, setPreviewTree] = useState<any[]>([]);
-  const [userPrompt, setUserPrompt] = useState('');
+  const [processingText, setProcessingText] = useState('Initializing...');
+  
+  const [selectedFolderId, setSelectedFolderId] = useState<string | undefined>(undefined);
   const [command, setCommand] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
   const [isVaporizing, setIsVaporizing] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const content = event.target?.result as string;
-        setLibrary(parseBookmarksHTML(content));
-      };
-      reader.readAsText(file);
+  useEffect(() => {
+    if (appState === 'processing') {
+      const texts = [
+        "Parsing HTML structure...",
+        "Identifying duplicates...",
+        "Analyzing semantic themes...",
+        "Architecting folder hierarchy...",
+        "Crystallizing metadata..."
+      ];
+      let i = 0;
+      setProcessingText(texts[0]);
+      const interval = setInterval(() => {
+        i = (i + 1) % texts.length;
+        setProcessingText(texts[i]);
+      }, 2500);
+      return () => clearInterval(interval);
     }
-  };
+  }, [appState]);
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const content = event.target?.result as string;
-        setLibrary(parseBookmarksHTML(content));
-      };
-      reader.readAsText(file);
-    }
-  };
-
-  const handleCommand = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!command || !library) return;
+  const processFile = async (content: string) => {
+    const parsed = parseBookmarksHTML(content);
+    const initialCount = parsed.bookmarks.length;
     
-    const cmd = command;
-    setCommand('');
-    setLogs(prev => [...prev, `> ${cmd}`]);
-    setIsProcessing(true);
-
-    try {
-      const { processCommand } = await import('./services/gemini');
-      const response = await processCommand(library, cmd, (action) => {
-        setLibrary(prev => {
-          if (!prev) return prev;
-          const next = { ...prev };
-          
-          if (action.type === 'MOVE_BOOKMARKS') {
-            const { bookmarkIds, targetFolderId } = action.payload;
-            next.bookmarks = next.bookmarks.map(b => 
-              bookmarkIds.includes(b.id) ? { ...b, folder: targetFolderId } : b
-            );
-            setLogs(l => [...l, `[SYSTEM] Moved ${bookmarkIds.length} items to folder ${targetFolderId}`]);
-          } else if (action.type === 'CREATE_FOLDER') {
-            const { name, parentId } = action.payload;
-            const newFolder = { id: Math.random().toString(36).substr(2, 9), name, parentId };
-            next.folders = [...next.folders, newFolder];
-            setLogs(l => [...l, `[SYSTEM] Created folder: ${name}`]);
-          }
-          
-          return next;
-        });
-      });
-
-      if (response) {
-        setLogs(prev => [...prev, `AI: ${response}`]);
-      }
-    } catch (error) {
-      console.error(error);
-      setLogs(prev => [...prev, `[ERROR] Failed to process command.`]);
-    } finally {
-      setIsProcessing(false);
-    }
+    // Deduplicate
+    const uniqueBookmarks: Bookmark[] = [];
+    const seenUrls = new Set();
+    parsed.bookmarks.forEach(b => {
+       if (!seenUrls.has(b.url)) {
+          seenUrls.add(b.url);
+          uniqueBookmarks.push(b);
+       }
+    });
+    parsed.bookmarks = uniqueBookmarks;
+    const duplicates = initialCount - uniqueBookmarks.length;
+    
+    setOriginalStats({ total: initialCount, duplicates });
+    setOriginalLibrary(parsed);
+    setLibrary(parsed);
+    
+    await runAutoSuggest(parsed);
   };
 
-  const handleSuggest = async () => {
-    if (!library) return;
-    setIsProcessing(true);
+  const runAutoSuggest = async (lib: BookmarkLibrary, customPrompt?: string) => {
+    setAppState('processing');
     try {
-      const res = await suggestStructure(library, userPrompt);
+      const res = await suggestStructure(lib, customPrompt || "Organize these bookmarks into a clean, logical hierarchy. Group likely dead or obsolete links into an 'Archive' folder.");
       setSuggestion(res);
       
       const tree: any = {};
@@ -140,22 +111,46 @@ export default function App() {
         });
       });
       setPreviewTree(Object.values(tree));
+      setAppState('review');
     } catch (error) {
       console.error(error);
-      setLogs(l => [...l, `[ERROR] AI Suggestion failed. Try a smaller selection.`]);
-    } finally {
-      setIsProcessing(false);
+      setAppState('upload');
+      alert("Failed to analyze bookmarks. Please try a smaller file.");
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        processFile(content);
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        processFile(content);
+      };
+      reader.readAsText(file);
     }
   };
 
   const applySuggestion = async () => {
     if (!suggestion || !library) return;
     
-    // Trigger vaporize animation (shake phase)
+    setAppState('final');
     setIsVaporizing(true);
-    setSuggestion(null); // Hide modal immediately
-
-    // Wait for the shake animation to finish
+    
     await new Promise(resolve => setTimeout(resolve, 600));
     
     const newFolders: Folder[] = [];
@@ -192,17 +187,55 @@ export default function App() {
       }
     });
 
-    // Update state. This removes old bookmarks and triggers their exit animation.
     setLibrary({
       bookmarks: updatedBookmarks,
       folders: newFolders
     });
-    setPreviewTree([]);
-    setLogs(l => [...l, `[SYSTEM] Applied new hierarchical structure with ${newFolders.length} folders.`]);
+    setLogs([`[SYSTEM] Applied new hierarchical structure with ${newFolders.length} folders.`]);
     
-    // Wait for the vaporize exit animation to finish before resetting the flag
     await new Promise(resolve => setTimeout(resolve, 1000));
     setIsVaporizing(false);
+  };
+
+  const handleCommand = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!command || !library) return;
+    
+    const cmd = command;
+    setCommand('');
+    setLogs(prev => [...prev, `> ${cmd}`]);
+
+    try {
+      const { processCommand } = await import('./services/gemini');
+      const response = await processCommand(library, cmd, (action) => {
+        setLibrary(prev => {
+          if (!prev) return prev;
+          const next = { ...prev };
+          
+          if (action.type === 'MOVE_BOOKMARKS') {
+            const { bookmarkIds, targetFolderId } = action.payload;
+            next.bookmarks = next.bookmarks.map(b => 
+              bookmarkIds.includes(b.id) ? { ...b, folder: targetFolderId } : b
+            );
+            setLogs(l => [...l, `[SYSTEM] Moved ${bookmarkIds.length} items to folder ${targetFolderId}`]);
+          } else if (action.type === 'CREATE_FOLDER') {
+            const { name, parentId } = action.payload;
+            const newFolder = { id: Math.random().toString(36).substr(2, 9), name, parentId };
+            next.folders = [...next.folders, newFolder];
+            setLogs(l => [...l, `[SYSTEM] Created folder: ${name}`]);
+          }
+          
+          return next;
+        });
+      });
+
+      if (response) {
+        setLogs(prev => [...prev, `AI: ${response}`]);
+      }
+    } catch (error) {
+      console.error(error);
+      setLogs(prev => [...prev, `[ERROR] Failed to process command.`]);
+    }
   };
 
   const downloadHTML = () => {
@@ -216,7 +249,7 @@ export default function App() {
     a.click();
   };
 
-  if (!library) {
+  if (appState === 'upload') {
     return (
       <div 
         className={`min-h-screen flex flex-col items-center justify-center p-6 bg-bg-base relative overflow-hidden transition-colors duration-500 ${isDragging ? 'bg-accent/5' : ''}`}
@@ -224,7 +257,6 @@ export default function App() {
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
       >
-        {/* Faint background glow */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/5 blur-[120px] rounded-full pointer-events-none" />
         
         <motion.div 
@@ -235,7 +267,7 @@ export default function App() {
         >
           <div className="text-center space-y-4 mb-12">
             <h1 className="text-3xl font-medium tracking-tight text-text-main">MarkFlow</h1>
-            <p className="text-text-muted text-sm">High-precision bookmark architecture.</p>
+            <p className="text-text-muted text-sm">Chaos to clarity in 60 seconds.</p>
           </div>
 
           <div 
@@ -260,7 +292,115 @@ export default function App() {
     );
   }
 
-  const currentBookmarks = library.bookmarks.filter(b => b.folder === selectedFolderId);
+  if (appState === 'processing') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-bg-base relative overflow-hidden">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-accent/10 blur-[100px] rounded-full pointer-events-none animate-pulse" />
+        <div className="z-10 flex flex-col items-center space-y-8">
+          <div className="relative flex items-center justify-center">
+            <div className="absolute inset-0 border-t-2 border-accent rounded-full animate-spin w-24 h-24" />
+            <div className="absolute inset-2 border-r-2 border-accent/50 rounded-full animate-spin-reverse w-20 h-20" style={{ animationDirection: 'reverse', animationDuration: '3s' }} />
+            <Sparkles size={32} className="text-accent animate-pulse" />
+          </div>
+          <div className="text-center space-y-2">
+            <h2 className="text-xl font-medium text-text-main">Architecting Clarity</h2>
+            <motion.p 
+              key={processingText}
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -5 }}
+              className="text-sm font-mono text-text-muted"
+            >
+              {processingText}
+            </motion.p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (appState === 'review') {
+    return (
+      <div className="h-screen flex flex-col bg-bg-base overflow-hidden">
+        <header className="h-16 border-b border-border flex items-center justify-between px-8 shrink-0 bg-bg-base/80 backdrop-blur-md z-10">
+          <div className="flex items-center gap-3">
+            <Layers size={18} className="text-accent" />
+            <span className="text-sm font-medium tracking-tight text-text-main">Transformation Review</span>
+          </div>
+          <div className="text-xs font-mono text-text-muted bg-accent/10 text-accent px-3 py-1 rounded-full border border-accent/20">
+            Ready to Crystallize
+          </div>
+        </header>
+
+        <div className="flex-1 flex overflow-hidden p-8 gap-8">
+          {/* Left: Chaos */}
+          <div className="w-1/2 panel-border bg-bg-panel rounded-2xl flex flex-col overflow-hidden relative">
+            <div className="p-5 border-b border-border bg-black/40 flex justify-between items-center">
+              <span className="text-text-muted font-mono text-xs uppercase tracking-widest">Original Chaos</span>
+              <span className="text-red-400/80 text-xs font-mono bg-red-400/10 px-2 py-1 rounded-md">{originalStats.total} items • {originalStats.duplicates} duplicates removed</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar opacity-40 grayscale">
+              {originalLibrary?.bookmarks.map(b => (
+                <div key={b.id} className="flex items-center gap-3 text-sm text-text-muted truncate">
+                  <LinkIcon size={14} className="shrink-0" /> 
+                  <span className="truncate">{b.title}</span>
+                </div>
+              ))}
+            </div>
+            <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-bg-panel to-transparent pointer-events-none" />
+          </div>
+
+          {/* Right: Clarity */}
+          <div className="w-1/2 panel-border bg-bg-panel rounded-2xl flex flex-col overflow-hidden relative shadow-[0_0_50px_rgba(138,143,255,0.08)]">
+            <div className="p-5 border-b border-border bg-accent/5 flex justify-between items-center">
+              <span className="text-accent font-mono text-xs uppercase tracking-widest flex items-center gap-2">
+                <Sparkles size={14}/> Architected Clarity
+              </span>
+              <span className="text-accent text-xs font-mono bg-accent/10 px-2 py-1 rounded-md">{suggestion?.folders?.length || 0} Smart Folders</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-2">
+              {previewTree.map((f: any, i: number) => (
+                <FolderPreview key={i} folder={f} depth={0} />
+              ))}
+            </div>
+            <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-bg-panel to-transparent pointer-events-none" />
+          </div>
+        </div>
+
+        {/* Bottom Command Bar */}
+        <div className="h-28 shrink-0 flex items-start justify-center px-8 pb-8">
+          <div className="w-full max-w-5xl panel-border bg-bg-panel/90 backdrop-blur-xl rounded-2xl p-2 flex items-center shadow-2xl">
+            <button 
+              onClick={() => runAutoSuggest(originalLibrary!, "Generate a completely different, alternative structure.")} 
+              className="p-3 text-text-muted hover:text-accent hover:bg-accent/10 rounded-xl transition-all" 
+              title="Regenerate Alternative"
+            >
+              <RefreshCw size={20} />
+            </button>
+            <div className="w-[1px] h-8 bg-border mx-2" />
+            <Sparkles size={18} className="text-accent ml-3 shrink-0" />
+            <input 
+              type="text" 
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); runAutoSuggest(originalLibrary!, command); setCommand(''); } }}
+              placeholder="Refine structure (e.g. 'Group all AI tools together')..."
+              className="flex-1 bg-transparent border-none focus:outline-none text-sm font-medium text-text-main placeholder:text-text-muted px-4 py-3"
+            />
+            <button 
+              onClick={applySuggestion} 
+              className="bg-text-main text-bg-base px-8 py-3.5 rounded-xl text-sm font-semibold hover:bg-white transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(255,255,255,0.2)] ml-2"
+            >
+              <Check size={18} /> Apply & Crystallize
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // FINAL STATE
+  const currentBookmarks = library?.bookmarks.filter(b => b.folder === selectedFolderId) || [];
 
   return (
     <div className="h-screen flex bg-bg-base overflow-hidden">
@@ -279,7 +419,7 @@ export default function App() {
             <FolderIcon size={14} />
             <span className="font-medium">All Bookmarks</span>
           </button>
-          {library.folders.map(folder => (
+          {library?.folders.map(folder => (
             <button 
               key={folder.id}
               onClick={() => setSelectedFolderId(folder.id)}
@@ -291,34 +431,6 @@ export default function App() {
           ))}
         </div>
         
-        {/* Architect Config */}
-        <div className="p-4 border-t border-border bg-bg-panel/50 flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <Sparkles size={12} className="text-accent" />
-            <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Architect Config</div>
-          </div>
-          <textarea
-            value={userPrompt}
-            onChange={(e) => setUserPrompt(e.target.value)}
-            placeholder="Describe your ideal folder structure (e.g., 'Group by tech stack, separate design tools')..."
-            className="w-full bg-bg-base border border-border rounded-md p-3 text-xs text-text-main placeholder:text-text-muted focus:outline-none focus:border-border-focus focus:shadow-[0_0_15px_rgba(138,143,255,0.1)] resize-none h-24 custom-scrollbar transition-all"
-          />
-          <button
-            onClick={handleSuggest}
-            disabled={isProcessing}
-            className="w-full bg-white/5 hover:bg-white/10 text-text-main py-2.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {isProcessing ? (
-              <>
-                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-                Architecting...
-              </>
-            ) : (
-              'Generate Structure'
-            )}
-          </button>
-        </div>
-
         {/* Logs */}
         <div className="h-40 border-t border-border bg-bg-base/50 p-4 flex flex-col">
           <div className="flex items-center gap-2 mb-3">
@@ -340,12 +452,12 @@ export default function App() {
       <main className="flex-1 flex flex-col relative">
         <header className="h-14 border-b border-border flex items-center justify-between px-8 shrink-0 bg-bg-base/80 backdrop-blur-md z-10">
           <div className="flex items-center gap-3 text-xs text-text-muted font-medium">
-            <span className="text-text-main">{selectedFolderId ? library.folders.find(f => f.id === selectedFolderId)?.name : 'Root'}</span>
+            <span className="text-text-main">{selectedFolderId ? library?.folders.find(f => f.id === selectedFolderId)?.name : 'Root'}</span>
             <span className="text-border">/</span>
             <span>{currentBookmarks.length} items</span>
           </div>
-          <button onClick={downloadHTML} className="text-xs text-text-muted hover:text-text-main transition-colors flex items-center gap-2 font-medium">
-            <Download size={14} /> Export
+          <button onClick={downloadHTML} className="bg-text-main text-bg-base px-4 py-2 rounded-md text-xs font-medium hover:bg-white transition-colors flex items-center gap-2 shadow-[0_0_15px_rgba(255,255,255,0.2)]">
+            <Download size={14} /> Export HTML
           </button>
         </header>
 
@@ -410,76 +522,8 @@ export default function App() {
                 className="w-full bg-transparent border-none focus:outline-none text-sm font-medium text-text-main placeholder:text-text-muted px-4 py-2.5"
               />
             </form>
-            
-            <div className="flex items-center gap-2 pr-2">
-              {isProcessing && (
-                <div className="flex items-center gap-2 px-4">
-                  <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-                  <span className="text-xs text-text-muted font-mono">Processing...</span>
-                </div>
-              )}
-            </div>
           </div>
         </div>
-
-        {/* Suggestion Overlay */}
-        <AnimatePresence>
-          {suggestion && (
-            <motion.div 
-              initial={{ opacity: 0, backdropFilter: "blur(0px)" }}
-              animate={{ opacity: 1, backdropFilter: "blur(8px)" }}
-              exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
-              className="absolute inset-0 z-50 bg-bg-base/60 flex items-center justify-center p-6"
-            >
-              <motion.div 
-                initial={{ scale: 0.95, opacity: 0, y: 10 }}
-                animate={{ scale: 1, opacity: 1, y: 0 }}
-                exit={{ scale: 0.95, opacity: 0, y: 10 }}
-                className="max-w-2xl w-full panel-border bg-bg-panel shadow-2xl rounded-xl overflow-hidden flex flex-col max-h-[80vh]"
-              >
-                <div className="p-6 border-b border-border flex items-center justify-between">
-                  <div>
-                    <h3 className="text-lg font-medium text-text-main">Proposed Architecture</h3>
-                    <p className="text-xs text-text-muted mt-1">Generated by Gemini 3.1 Pro</p>
-                  </div>
-                  <button onClick={() => setSuggestion(null)} className="text-text-muted hover:text-text-main transition-colors">
-                    <X size={20} />
-                  </button>
-                </div>
-
-                <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6">
-                  <div className="space-y-2">
-                    {previewTree.map((f: any, i: number) => (
-                      <FolderPreview key={i} folder={f} depth={0} />
-                    ))}
-                  </div>
-                  
-                  <div className="p-4 rounded-md bg-accent/5 border border-accent/10">
-                    <p className="text-xs text-accent leading-relaxed">
-                      <span className="font-semibold">Reasoning:</span> {suggestion.reasoning}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-4 border-t border-border bg-bg-base flex items-center justify-end gap-3">
-                  <button 
-                    onClick={() => setSuggestion(null)}
-                    className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-main transition-colors"
-                  >
-                    Discard
-                  </button>
-                  <button 
-                    onClick={applySuggestion}
-                    className="bg-text-main text-bg-base px-5 py-2.5 rounded-md text-xs font-medium hover:bg-white transition-colors flex items-center gap-2 shadow-[0_0_15px_rgba(255,255,255,0.2)]"
-                  >
-                    <Check size={14} />
-                    Apply & Crystallize
-                  </button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </main>
     </div>
   );
