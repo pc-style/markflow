@@ -1,5 +1,7 @@
-import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
-import { BookmarkLibrary } from "../utils/bookmarkParser";
+import { GoogleGenAI, ThinkingLevel, Type, GenerateContentResponse, FunctionDeclaration } from "@google/genai";
+import { BookmarkLibrary, Bookmark, Folder } from "../utils/bookmarkParser";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 export const MODELS = {
   THINKING: "gemini-3.1-pro-preview",
@@ -7,17 +9,15 @@ export const MODELS = {
   LITE: "gemini-flash-lite-latest"
 };
 
-export async function suggestStructure(apiKey: string, library: BookmarkLibrary, userPrompt?: string) {
-  const ai = new GoogleGenAI({ apiKey });
-
+export async function suggestStructure(library: BookmarkLibrary, userPrompt?: string) {
   // Extract domains and truncate titles to minimize payload size while maximizing bookmark count
   const sampleBookmarks = library.bookmarks.slice(0, 150).map(b => {
     let domain = b.url.substring(0, 50);
     try { domain = new URL(b.url).hostname; } catch (e) {}
-    return { 
-      id: b.id, 
-      title: b.title.substring(0, 60), 
-      domain 
+    return {
+      id: b.id,
+      title: b.title.substring(0, 60),
+      domain
     };
   });
 
@@ -28,17 +28,17 @@ export async function suggestStructure(apiKey: string, library: BookmarkLibrary,
         role: "user",
         parts: [{
           text: `You are an expert data architect. Transform this chaotic list of bookmarks into a pristine, logical folder hierarchy.
-          
+
           Tasks:
           1. Group by clear, broad semantic themes (e.g., 'Development', 'Design', 'Finance', 'Reading').
           2. Identify likely dead, obsolete, or temporary links (e.g., localhost, test domains) and place them in an 'Archive' folder.
           3. Sort EVERY provided bookmark into the most appropriate folder.
-          
+
           Bookmarks to sort:
           ${JSON.stringify(sampleBookmarks)}
-          
+
           ${userPrompt ? `User Refinement Request: ${userPrompt}` : ""}
-          
+
           Return a JSON object with:
           1. 'folders': An array of objects with 'path' (e.g., "Work/Projects/AI") and 'description'.
           2. 'assignments': An array of objects with 'bookmarkId' and 'folderPath'.
@@ -122,19 +122,16 @@ const searchWebContextTool: FunctionDeclaration = {
 };
 
 export async function processCommand(
-  apiKey: string,
   library: BookmarkLibrary,
   command: string,
   onUpdate: (action: { type: string; payload: any }) => void
 ) {
-  const ai = new GoogleGenAI({ apiKey });
-
   const response = await ai.models.generateContent({
     model: MODELS.LITE,
     contents: [
       {
         role: "system",
-        parts: [{ text: `You are a bookmark organization assistant. Use the provided tools to help the user organize their library. 
+        parts: [{ text: `You are a bookmark organization assistant. Use the provided tools to help the user organize their library.
         Current Library State:
         Folders: ${JSON.stringify(library.folders)}
         Bookmarks Sample: ${JSON.stringify(library.bookmarks.slice(0, 50))}` }]
@@ -164,10 +161,10 @@ export async function processCommand(
           config: { tools: [{ googleSearch: {} }] }
         });
         // Recursively call with search results
-        return processCommand(apiKey, library, `Based on this search info: "${searchRes.text}", proceed with the user's original request: "${command}"`, onUpdate);
+        return processCommand(library, `Based on this search info: "${searchRes.text}", proceed with the user's original request: "${command}"`, onUpdate);
       }
     }
   }
-  
+
   return response.text;
 }
