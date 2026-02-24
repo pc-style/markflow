@@ -1,0 +1,5 @@
+{
+  "name": "MarkFlow",
+  "description": "AI-powered bookmark architect using Gemini 2.5 Flash Lite tool calling to reorganize and enrich your digital library.",
+  "requestFramePermissions": []
+}
