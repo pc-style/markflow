@@ -1,43 +1,44 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  
-  --color-brand-cyan: #00f2ff;
-  --color-brand-black: #0a0a0a;
-  --color-brand-white: #f8f8f8;
+
+  --color-bg-base: #000000;
+  --color-bg-panel: #0a0a0a;
+  --color-bg-hover: #121212;
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-focus: rgba(138, 143, 255, 0.4);
+  --color-text-main: #ededed;
+  --color-text-muted: #888888;
+  --color-accent: #8a8fff;
+  --color-accent-glow: rgba(138, 143, 255, 0.15);
 }
 
 @layer base {
   body {
-    @apply bg-brand-black text-brand-white font-sans antialiased;
+    @apply bg-bg-base text-text-main font-sans antialiased selection:bg-accent/30;
   }
 }
 
-.terminal-border {
-  border: 1px solid rgba(0, 242, 255, 0.2);
+.panel-border {
+  border: 1px solid var(--color-border);
 }
 
-.terminal-border-focus {
-  border: 1px solid rgba(0, 242, 255, 0.6);
-  box-shadow: 0 0 15px rgba(0, 242, 255, 0.1);
+.glow-focus:focus-within {
+  box-shadow: 0 0 40px -10px var(--color-accent-glow);
+  border-color: var(--color-border-focus);
 }
 
-.custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+.glass-panel {
+  background: rgba(10, 10, 10, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(0, 242, 255, 0.2);
-  border-radius: 10px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 242, 255, 0.5);
-}
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }

@@ -3,41 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   Upload, 
-  FileText, 
-  Search, 
   Folder as FolderIcon, 
   Link as LinkIcon, 
-  ChevronRight, 
-  ChevronDown, 
-  Plus, 
-  Trash2, 
   Download,
   Terminal,
   Sparkles,
-  Command,
   Check,
-  X,
-  Edit3
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { parseBookmarksHTML, exportToHTML, Bookmark, Folder, BookmarkLibrary } from './utils/bookmarkParser';
-import { suggestStructure, MODELS } from './services/gemini';
+import { parseBookmarksHTML, exportToHTML, BookmarkLibrary, Folder } from './utils/bookmarkParser';
+import { suggestStructure } from './services/gemini';
 
 const FolderPreview = ({ folder, depth }: { folder: any, depth: number }) => (
-  <div className="space-y-2" style={{ marginLeft: `${depth * 20}px` }}>
-    <div className="p-3 border border-brand-white/10 rounded-sm bg-brand-white/[0.02]">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-brand-cyan">
-          <FolderIcon size={14} />
-          <span className="text-xs font-bold uppercase tracking-tight">{folder.name}</span>
-        </div>
-        <span className="text-[10px] font-mono text-brand-white/20 uppercase">
-          {folder.bookmarkCount || 0} Items
-        </span>
+  <div className="space-y-1" style={{ marginLeft: `${depth * 16}px` }}>
+    <div className="py-2 px-3 rounded-md hover:bg-white/5 transition-colors flex items-center justify-between group">
+      <div className="flex items-center gap-3">
+        <FolderIcon size={14} className="text-text-muted group-hover:text-accent transition-colors" />
+        <span className="text-sm font-medium text-text-main">{folder.name}</span>
       </div>
+      <span className="text-[10px] font-mono text-text-muted">
+        {folder.bookmarkCount || 0} items
+      </span>
     </div>
     {folder.children && Object.values(folder.children).map((child: any, i: number) => (
       <FolderPreview key={i} folder={child} depth={depth + 1} />
@@ -55,10 +45,25 @@ export default function App() {
   const [userPrompt, setUserPrompt] = useState('');
   const [command, setCommand] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
+  const [isVaporizing, setIsVaporizing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        setLibrary(parseBookmarksHTML(content));
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -113,27 +118,6 @@ export default function App() {
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const content = event.target?.result as string;
-        setLibrary(parseBookmarksHTML(content));
-      };
-      reader.readAsText(file);
-    }
-  };
-
-  const handlePaste = (e: React.ClipboardEvent) => {
-    const content = e.clipboardData.getData('text');
-    if (content.includes('<DL>') || content.includes('<A HREF=')) {
-      setLibrary(parseBookmarksHTML(content));
-    }
-  };
-
   const handleSuggest = async () => {
     if (!library) return;
     setIsProcessing(true);
@@ -141,7 +125,6 @@ export default function App() {
       const res = await suggestStructure(library, userPrompt);
       setSuggestion(res);
       
-      // Reconstruct tree for preview
       const tree: any = {};
       res.folders.forEach((f: any) => {
         const parts = f.path.split('/');
@@ -165,14 +148,20 @@ export default function App() {
     }
   };
 
-  const applySuggestion = () => {
+  const applySuggestion = async () => {
     if (!suggestion || !library) return;
+    
+    // Trigger vaporize animation (shake phase)
+    setIsVaporizing(true);
+    setSuggestion(null); // Hide modal immediately
+
+    // Wait for the shake animation to finish
+    await new Promise(resolve => setTimeout(resolve, 600));
     
     const newFolders: Folder[] = [];
     const updatedBookmarks = [...library.bookmarks];
-    const pathMap = new Map<string, string>(); // path -> folderId
+    const pathMap = new Map<string, string>();
 
-    // Create folders from paths
     suggestion.folders.forEach((f: any) => {
       const parts = f.path.split('/');
       let currentParentId: string | undefined = undefined;
@@ -193,7 +182,6 @@ export default function App() {
       });
     });
 
-    // Assign bookmarks
     suggestion.assignments.forEach((a: any) => {
       const folderId = pathMap.get(a.folderPath);
       if (folderId) {
@@ -204,13 +192,17 @@ export default function App() {
       }
     });
 
+    // Update state. This removes old bookmarks and triggers their exit animation.
     setLibrary({
       bookmarks: updatedBookmarks,
       folders: newFolders
     });
-    setSuggestion(null);
     setPreviewTree([]);
     setLogs(l => [...l, `[SYSTEM] Applied new hierarchical structure with ${newFolders.length} folders.`]);
+    
+    // Wait for the vaporize exit animation to finish before resetting the flag
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    setIsVaporizing(false);
   };
 
   const downloadHTML = () => {
@@ -227,40 +219,33 @@ export default function App() {
   if (!library) {
     return (
       <div 
-        className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-300 ${isDragging ? 'bg-brand-cyan/5' : ''}`}
+        className={`min-h-screen flex flex-col items-center justify-center p-6 bg-bg-base relative overflow-hidden transition-colors duration-500 ${isDragging ? 'bg-accent/5' : ''}`}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
-        onPaste={handlePaste}
       >
+        {/* Faint background glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/5 blur-[120px] rounded-full pointer-events-none" />
+        
         <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-2xl w-full text-center space-y-8"
+          initial={{ opacity: 0, filter: "blur(10px)", y: 20 }}
+          animate={{ opacity: 1, filter: "blur(0px)", y: 0 }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          className="max-w-md w-full z-10"
         >
-          <div className="space-y-2">
-            <h1 className="text-6xl font-bold tracking-tighter uppercase italic">
-              Mark<span className="text-brand-cyan">Flow</span>
-            </h1>
-            <p className="text-brand-white/40 font-mono text-sm tracking-widest uppercase">
-              Architectural Bookmark Reorganization
-            </p>
+          <div className="text-center space-y-4 mb-12">
+            <h1 className="text-3xl font-medium tracking-tight text-text-main">MarkFlow</h1>
+            <p className="text-text-muted text-sm">High-precision bookmark architecture.</p>
           </div>
 
           <div 
             onClick={() => fileInputRef.current?.click()}
-            className="group relative cursor-pointer terminal-border p-12 rounded-sm transition-all hover:terminal-border-focus overflow-hidden"
+            className="group relative cursor-pointer panel-border p-10 rounded-xl bg-bg-panel/50 hover:bg-bg-hover transition-all duration-500 overflow-hidden text-center"
           >
-            <div className="absolute inset-0 bg-brand-cyan/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="relative z-10 flex flex-col items-center space-y-4">
-              <div className="p-4 rounded-full bg-brand-cyan/10 text-brand-cyan">
-                <Upload size={32} />
-              </div>
-              <div className="space-y-1">
-                <p className="text-xl font-medium">Drop your HTML file here</p>
-                <p className="text-brand-white/40 text-sm font-mono">OR PASTE CONTENT DIRECTLY</p>
-              </div>
-            </div>
+            <div className="absolute inset-0 bg-accent/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <Upload size={24} className="mx-auto mb-4 text-text-muted group-hover:text-accent transition-colors duration-500" />
+            <p className="text-sm font-medium text-text-main mb-1">Initialize Workspace</p>
+            <p className="text-xs text-text-muted">Drop HTML file or click to browse</p>
           </div>
 
           <input 
@@ -270,12 +255,6 @@ export default function App() {
             className="hidden" 
             accept=".html"
           />
-
-          <div className="flex justify-center gap-8 text-brand-white/20 font-mono text-xs uppercase tracking-widest">
-            <div className="flex items-center gap-2"><Check size={14} /> Netscape Format</div>
-            <div className="flex items-center gap-2"><Check size={14} /> Gemini 2.5 Flash</div>
-            <div className="flex items-center gap-2"><Check size={14} /> Tool Calling</div>
-          </div>
         </motion.div>
       </div>
     );
@@ -284,268 +263,224 @@ export default function App() {
   const currentBookmarks = library.bookmarks.filter(b => b.folder === selectedFolderId);
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-brand-black">
-      {/* Header */}
-      <header className="h-16 border-b border-brand-white/10 flex items-center justify-between px-6 shrink-0">
-        <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold tracking-tighter uppercase italic">
-            Mark<span className="text-brand-cyan">Flow</span>
-          </h2>
-          <div className="h-4 w-[1px] bg-brand-white/10" />
-          <div className="flex items-center gap-2 text-brand-white/40 font-mono text-xs uppercase tracking-widest">
-            <Terminal size={14} />
-            <span>Session: Active</span>
+    <div className="h-screen flex bg-bg-base overflow-hidden">
+      {/* Sidebar */}
+      <aside className="w-64 border-r border-border bg-bg-panel/30 flex flex-col shrink-0 z-10">
+        <div className="h-14 flex items-center px-6 border-b border-border">
+          <span className="text-sm font-medium tracking-tight text-text-main">MarkFlow</span>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-4 space-y-1 custom-scrollbar">
+          <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-4 px-2 mt-2">Library</div>
+          <button 
+            onClick={() => setSelectedFolderId(undefined)}
+            className={`w-full flex items-center gap-3 px-3 py-2 text-xs rounded-md transition-colors ${!selectedFolderId ? 'bg-accent/10 text-accent' : 'text-text-muted hover:text-text-main hover:bg-white/5'}`}
+          >
+            <FolderIcon size={14} />
+            <span className="font-medium">All Bookmarks</span>
+          </button>
+          {library.folders.map(folder => (
+            <button 
+              key={folder.id}
+              onClick={() => setSelectedFolderId(folder.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2 text-xs rounded-md transition-colors ${selectedFolderId === folder.id ? 'bg-accent/10 text-accent' : 'text-text-muted hover:text-text-main hover:bg-white/5'}`}
+            >
+              <FolderIcon size={14} />
+              <span className="truncate font-medium">{folder.name}</span>
+            </button>
+          ))}
+        </div>
+        
+        {/* Architect Config */}
+        <div className="p-4 border-t border-border bg-bg-panel/50 flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Sparkles size={12} className="text-accent" />
+            <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Architect Config</div>
           </div>
+          <textarea
+            value={userPrompt}
+            onChange={(e) => setUserPrompt(e.target.value)}
+            placeholder="Describe your ideal folder structure (e.g., 'Group by tech stack, separate design tools')..."
+            className="w-full bg-bg-base border border-border rounded-md p-3 text-xs text-text-main placeholder:text-text-muted focus:outline-none focus:border-border-focus focus:shadow-[0_0_15px_rgba(138,143,255,0.1)] resize-none h-24 custom-scrollbar transition-all"
+          />
+          <button
+            onClick={handleSuggest}
+            disabled={isProcessing}
+            className="w-full bg-white/5 hover:bg-white/10 text-text-main py-2.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {isProcessing ? (
+              <>
+                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+                Architecting...
+              </>
+            ) : (
+              'Generate Structure'
+            )}
+          </button>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => setLibrary(null)}
-            className="px-4 py-2 text-xs font-mono uppercase tracking-widest text-brand-white/40 hover:text-brand-white transition-colors"
-          >
-            Reset
-          </button>
-          <button 
-            onClick={downloadHTML}
-            className="flex items-center gap-2 bg-brand-cyan text-brand-black px-4 py-2 rounded-sm text-xs font-bold uppercase tracking-widest hover:brightness-110 transition-all"
-          >
-            <Download size={16} />
-            Export HTML
-          </button>
+        {/* Logs */}
+        <div className="h-40 border-t border-border bg-bg-base/50 p-4 flex flex-col">
+          <div className="flex items-center gap-2 mb-3">
+            <Terminal size={12} className="text-text-muted" />
+            <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">System Stream</div>
+          </div>
+          <div className="flex-1 overflow-y-auto space-y-1.5 font-mono text-[10px] custom-scrollbar pr-2">
+            {logs.length === 0 && <span className="text-text-muted/50 italic">Awaiting commands...</span>}
+            {logs.map((log, i) => (
+              <div key={i} className={log.startsWith('>') ? 'text-accent' : log.startsWith('[ERROR]') ? 'text-red-400' : 'text-text-muted'}>
+                {log}
+              </div>
+            ))}
+          </div>
         </div>
-      </header>
+      </aside>
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
-        <aside className="w-72 border-r border-brand-white/10 flex flex-col shrink-0">
-          <div className="p-4 border-b border-brand-white/10">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-brand-white/40">Library</span>
-              <button className="text-brand-cyan hover:brightness-125"><Plus size={16} /></button>
-            </div>
-            <div className="space-y-1 overflow-y-auto custom-scrollbar max-h-[40vh]">
-              <button 
-                onClick={() => setSelectedFolderId(undefined)}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-sm transition-colors ${!selectedFolderId ? 'bg-brand-cyan/10 text-brand-cyan' : 'hover:bg-brand-white/5 text-brand-white/60'}`}
-              >
-                <FolderIcon size={16} />
-                <span>All Bookmarks</span>
-              </button>
-              {library.folders.map(folder => (
-                <button 
-                  key={folder.id}
-                  onClick={() => setSelectedFolderId(folder.id)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-sm transition-colors ${selectedFolderId === folder.id ? 'bg-brand-cyan/10 text-brand-cyan' : 'hover:bg-brand-white/5 text-brand-white/60'}`}
-                >
-                  <FolderIcon size={16} />
-                  <span className="truncate">{folder.name}</span>
-                </button>
-              ))}
-            </div>
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col relative">
+        <header className="h-14 border-b border-border flex items-center justify-between px-8 shrink-0 bg-bg-base/80 backdrop-blur-md z-10">
+          <div className="flex items-center gap-3 text-xs text-text-muted font-medium">
+            <span className="text-text-main">{selectedFolderId ? library.folders.find(f => f.id === selectedFolderId)?.name : 'Root'}</span>
+            <span className="text-border">/</span>
+            <span>{currentBookmarks.length} items</span>
           </div>
+          <button onClick={downloadHTML} className="text-xs text-text-muted hover:text-text-main transition-colors flex items-center gap-2 font-medium">
+            <Download size={14} /> Export
+          </button>
+        </header>
 
-          <div className="flex-1 p-4 flex flex-col">
-            <div className="flex items-center gap-2 mb-4">
-              <Sparkles size={16} className="text-brand-cyan" />
-              <span className="text-[10px] font-mono uppercase tracking-widest text-brand-white/40">AI Architect</span>
-            </div>
-            
-            <div className="flex-1 flex flex-col space-y-4">
-              <textarea 
-                value={userPrompt}
-                onChange={(e) => setUserPrompt(e.target.value)}
-                placeholder="Describe your ideal structure..."
-                className="flex-[2] bg-brand-white/5 border border-brand-white/10 p-3 text-sm font-mono rounded-sm focus:outline-none focus:border-brand-cyan/40 resize-none custom-scrollbar"
-              />
-              <button 
-                onClick={handleSuggest}
-                disabled={isProcessing}
-                className="w-full bg-brand-white/5 border border-brand-cyan/20 text-brand-cyan py-3 rounded-sm text-xs font-bold uppercase tracking-widest hover:bg-brand-cyan/10 transition-all disabled:opacity-50"
-              >
-                {isProcessing ? 'Thinking...' : 'Propose Structure'}
-              </button>
-
-              <div className="flex-1 border-t border-brand-white/10 pt-4 flex flex-col overflow-hidden">
-                <div className="flex items-center gap-2 mb-2">
-                  <Terminal size={12} className="text-brand-white/20" />
-                  <span className="text-[9px] font-mono uppercase tracking-widest text-brand-white/20">System Logs</span>
-                </div>
-                <div className="flex-1 bg-black/40 p-2 rounded-sm font-mono text-[10px] overflow-y-auto custom-scrollbar space-y-1">
-                  {logs.length === 0 && <span className="text-brand-white/10 italic">Waiting for input...</span>}
-                  {logs.map((log, i) => (
-                    <div key={i} className={log.startsWith('>') ? 'text-brand-cyan' : log.startsWith('[ERROR]') ? 'text-red-400' : 'text-brand-white/40'}>
-                      {log}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        {/* Main Content */}
-        <main className="flex-1 flex flex-col overflow-hidden relative">
-          <div className="h-12 border-b border-brand-white/10 flex items-center justify-between px-6 shrink-0 bg-brand-black/50 backdrop-blur-sm">
-            <div className="flex items-center gap-4">
-              <span className="text-xs font-mono text-brand-white/40">
-                {selectedFolderId ? library.folders.find(f => f.id === selectedFolderId)?.name : 'Root'}
-              </span>
-              <span className="text-[10px] font-mono text-brand-white/20">/</span>
-              <span className="text-xs font-mono text-brand-white/40">{currentBookmarks.length} Items</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-white/20" />
-                <input 
-                  type="text" 
-                  placeholder="Filter..." 
-                  className="bg-brand-white/5 border border-brand-white/10 pl-9 pr-4 py-1 text-xs font-mono rounded-full focus:outline-none focus:border-brand-cyan/40"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              <AnimatePresence mode="popLayout">
-                {currentBookmarks.map((bookmark) => (
-                  <motion.div 
-                    layout
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    key={bookmark.id}
-                    className="group terminal-border p-4 rounded-sm hover:terminal-border-focus transition-all bg-brand-white/[0.02] flex flex-col justify-between min-h-[120px]"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between">
-                        <div className="p-2 rounded-sm bg-brand-cyan/5 text-brand-cyan">
-                          <LinkIcon size={14} />
-                        </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button className="p-1 hover:text-brand-cyan"><Edit3 size={14} /></button>
-                          <button className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
-                        </div>
-                      </div>
-                      <h3 className="text-sm font-medium line-clamp-2 leading-tight group-hover:text-brand-cyan transition-colors">
-                        {bookmark.title}
-                      </h3>
-                    </div>
-                    <div className="pt-4 flex items-center justify-between">
-                      <span className="text-[10px] font-mono text-brand-white/20 truncate max-w-[150px]">
-                        {new URL(bookmark.url).hostname}
-                      </span>
-                      <a 
-                        href={bookmark.url} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-[10px] font-mono text-brand-cyan uppercase tracking-widest hover:underline"
-                      >
-                        Open
-                      </a>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          </div>
-
-          {/* Suggestion Overlay */}
-          <AnimatePresence>
-            {suggestion && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 z-50 bg-brand-black/80 backdrop-blur-md flex items-center justify-center p-6"
-              >
+        <div className="flex-1 overflow-y-auto p-8 relative custom-scrollbar">
+          {/* Vaporize Shake Container */}
+          <motion.div 
+            animate={isVaporizing ? { 
+              x: [-8, 8, -8, 8, -4, 4, -2, 2, 0], 
+              y: [-4, 4, -4, 4, -2, 2, -1, 1, 0],
+              filter: ["blur(0px)", "blur(2px)", "blur(4px)", "blur(8px)"],
+              transition: { duration: 0.6 } 
+            } : {}}
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-32"
+          >
+            <AnimatePresence mode="popLayout">
+              {currentBookmarks.map((bookmark) => (
                 <motion.div 
-                  initial={{ scale: 0.9, y: 20 }}
-                  animate={{ scale: 1, y: 0 }}
-                  className="max-w-3xl w-full terminal-border bg-brand-black p-8 rounded-sm space-y-8"
+                  layout
+                  initial={{ opacity: 0, scale: 0.8, filter: "blur(10px)" }}
+                  animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                  exit={isVaporizing ? {
+                    opacity: 0,
+                    scale: 0.2,
+                    filter: "blur(20px)",
+                    x: (Math.random() - 0.5) * 800,
+                    y: (Math.random() - 0.5) * 800,
+                    rotate: (Math.random() - 0.5) * 360,
+                    transition: { duration: 0.8, ease: "easeOut" }
+                  } : { opacity: 0, scale: 0.95, filter: "blur(4px)" }}
+                  key={bookmark.id}
+                  className="panel-border p-5 rounded-lg bg-bg-panel hover:bg-bg-hover transition-colors flex flex-col justify-between min-h-[110px] group"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <h3 className="text-2xl font-bold tracking-tighter uppercase italic">Proposed Architecture</h3>
-                      <p className="text-brand-white/40 font-mono text-xs uppercase tracking-widest">Generated by Gemini 3.1 Pro</p>
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between">
+                      <LinkIcon size={14} className="text-text-muted group-hover:text-accent transition-colors" />
                     </div>
-                    <button onClick={() => setSuggestion(null)} className="text-brand-white/40 hover:text-brand-white">
-                      <X size={24} />
-                    </button>
+                    <h3 className="text-sm font-medium line-clamp-2 leading-snug text-text-main">
+                      {bookmark.title}
+                    </h3>
                   </div>
-
-                  <div className="max-h-[50vh] overflow-y-auto custom-scrollbar pr-4 space-y-4">
-                    {previewTree.map((f: any, i: number) => (
-                      <FolderPreview key={i} folder={f} depth={0} />
-                    ))}
-                  </div>
-
-                  <div className="p-4 bg-brand-cyan/5 border border-brand-cyan/20 rounded-sm">
-                    <p className="text-xs font-mono text-brand-cyan leading-relaxed">
-                      <span className="font-bold">Reasoning:</span> {suggestion.reasoning}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-end gap-4">
-                    <button 
-                      onClick={() => setSuggestion(null)}
-                      className="px-6 py-3 text-xs font-bold uppercase tracking-widest text-brand-white/40 hover:text-brand-white"
-                    >
-                      Discard
-                    </button>
-                    <button 
-                      onClick={applySuggestion}
-                      className="bg-brand-cyan text-brand-black px-8 py-3 rounded-sm text-xs font-bold uppercase tracking-widest hover:brightness-110 transition-all flex items-center gap-2"
-                    >
-                      <Check size={16} />
-                      Apply Structure
-                    </button>
+                  <div className="pt-4 flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-text-muted truncate max-w-[180px]">
+                      {new URL(bookmark.url).hostname}
+                    </span>
                   </div>
                 </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              ))}
+            </AnimatePresence>
+          </motion.div>
+        </div>
 
-          {/* Command Stream (Bottom Bar) */}
-          <div className="h-16 border-t border-brand-white/10 bg-brand-black/80 backdrop-blur-md flex items-center px-6 gap-4">
-            <div className="text-brand-cyan shrink-0">
-              <Terminal size={18} />
-            </div>
-            <form onSubmit={handleCommand} className="flex-1">
+        {/* Central Command Input */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-20">
+          <div className="panel-border bg-bg-panel/90 backdrop-blur-xl rounded-xl p-2 flex items-center shadow-2xl glow-focus transition-all duration-300">
+            <Sparkles size={16} className="text-accent ml-3 shrink-0" />
+            <form onSubmit={handleCommand} className="flex-1 flex items-center">
               <input 
                 type="text" 
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
-                placeholder="Type a command (e.g. 'Move all coding links to a new Dev folder')..."
-                className="w-full bg-transparent border-none focus:outline-none text-sm font-mono text-brand-white placeholder:text-brand-white/20"
+                placeholder="Ask AI to organize, or type a command..."
+                className="w-full bg-transparent border-none focus:outline-none text-sm font-medium text-text-main placeholder:text-text-muted px-4 py-2.5"
               />
             </form>
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${isProcessing ? 'bg-brand-cyan animate-pulse' : 'bg-brand-white/20'}`} />
-              <span className="text-[10px] font-mono text-brand-white/40 uppercase tracking-widest">
-                {isProcessing ? 'Processing...' : 'Ready'}
-              </span>
+            
+            <div className="flex items-center gap-2 pr-2">
+              {isProcessing && (
+                <div className="flex items-center gap-2 px-4">
+                  <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+                  <span className="text-xs text-text-muted font-mono">Processing...</span>
+                </div>
+              )}
             </div>
           </div>
-        </main>
-      </div>
+        </div>
 
-      {/* Footer / Command Bar */}
-      <footer className="h-10 border-t border-brand-white/10 bg-brand-black flex items-center justify-between px-6 shrink-0">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-[10px] font-mono text-brand-white/40 uppercase tracking-widest">
-            <Command size={12} />
-            <span>CMD + K for AI</span>
-          </div>
-          <div className="flex items-center gap-2 text-[10px] font-mono text-brand-white/40 uppercase tracking-widest">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span>Gemini 2.5 Flash Lite</span>
-          </div>
-        </div>
-        <div className="text-[10px] font-mono text-brand-white/20 uppercase tracking-widest">
-          v1.0.4-stable // hyper-grid-01
-        </div>
-      </footer>
+        {/* Suggestion Overlay */}
+        <AnimatePresence>
+          {suggestion && (
+            <motion.div 
+              initial={{ opacity: 0, backdropFilter: "blur(0px)" }}
+              animate={{ opacity: 1, backdropFilter: "blur(8px)" }}
+              exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
+              className="absolute inset-0 z-50 bg-bg-base/60 flex items-center justify-center p-6"
+            >
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0, y: 10 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 10 }}
+                className="max-w-2xl w-full panel-border bg-bg-panel shadow-2xl rounded-xl overflow-hidden flex flex-col max-h-[80vh]"
+              >
+                <div className="p-6 border-b border-border flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-medium text-text-main">Proposed Architecture</h3>
+                    <p className="text-xs text-text-muted mt-1">Generated by Gemini 3.1 Pro</p>
+                  </div>
+                  <button onClick={() => setSuggestion(null)} className="text-text-muted hover:text-text-main transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6">
+                  <div className="space-y-2">
+                    {previewTree.map((f: any, i: number) => (
+                      <FolderPreview key={i} folder={f} depth={0} />
+                    ))}
+                  </div>
+                  
+                  <div className="p-4 rounded-md bg-accent/5 border border-accent/10">
+                    <p className="text-xs text-accent leading-relaxed">
+                      <span className="font-semibold">Reasoning:</span> {suggestion.reasoning}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 border-t border-border bg-bg-base flex items-center justify-end gap-3">
+                  <button 
+                    onClick={() => setSuggestion(null)}
+                    className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-main transition-colors"
+                  >
+                    Discard
+                  </button>
+                  <button 
+                    onClick={applySuggestion}
+                    className="bg-text-main text-bg-base px-5 py-2.5 rounded-md text-xs font-medium hover:bg-white transition-colors flex items-center gap-2 shadow-[0_0_15px_rgba(255,255,255,0.2)]"
+                  >
+                    <Check size={14} />
+                    Apply & Crystallize
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
     </div>
   );
 }

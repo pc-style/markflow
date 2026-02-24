@@ -6,7 +6,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 export const MODELS = {
   THINKING: "gemini-3.1-pro-preview",
   SEARCH: "gemini-3-flash-preview",
-  LITE: "gemini-2.5-flash-lite-latest"
+  LITE: "gemini-flash-lite-latest"
 };
 
 export async function suggestStructure(library: BookmarkLibrary, userPrompt?: string) {
