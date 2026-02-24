@@ -14,7 +14,7 @@ import { suggestStructure } from './services/gemini';
 
 type AppState = 'upload' | 'processing' | 'review' | 'final';
 
-const FolderPreview = ({ folder, depth }: { folder: any, depth: number }) => (
+const FolderPreview = ({ folder, depth }: any) => (
   <div className="space-y-1" style={{ marginLeft: `${depth * 16}px` }}>
     <div className="py-2 px-3 rounded-md bg-white/[0.02] border border-border hover:bg-white/5 transition-colors flex items-center justify-between group">
       <div className="flex items-center gap-3">
@@ -469,15 +469,15 @@ export default function App() {
               y: [-4, 4, -4, 4, -2, 2, -1, 1, 0],
               filter: ["blur(0px)", "blur(2px)", "blur(4px)", "blur(8px)"],
               transition: { duration: 0.6 } 
-            } : {}}
+            } : { filter: "blur(0px)" }}
             className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-32"
           >
             <AnimatePresence mode="popLayout">
               {currentBookmarks.map((bookmark) => (
                 <motion.div 
                   layout
-                  initial={{ opacity: 0, scale: 0.8, filter: "blur(10px)" }}
-                  animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
                   exit={isVaporizing ? {
                     opacity: 0,
                     scale: 0.2,

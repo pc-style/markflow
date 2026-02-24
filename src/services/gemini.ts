@@ -22,7 +22,7 @@ export async function suggestStructure(library: BookmarkLibrary, userPrompt?: st
   });
 
   const response = await ai.models.generateContent({
-    model: MODELS.SEARCH,
+    model: MODELS.LITE,
     contents: [
       {
         role: "user",
