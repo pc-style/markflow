@@ -256,7 +256,7 @@ export default function Main() {
 
     try {
       const { processCommand } = await import('../services/gemini');
-      const response = await processCommand(apiKey, library, cmd, (action) => {
+      const response = await processCommand(apiKey, library, cmd, async (action) => {
         setLibrary(prev => {
           if (!prev) return prev;
           const next = { ...prev };
@@ -296,6 +296,14 @@ export default function Main() {
     a.href = url;
     a.download = 'organized_bookmarks.html';
     a.click();
+  };
+
+  const getHostname = (url: string) => {
+    try {
+      return new URL(url).hostname;
+    } catch (e) {
+      return url.substring(0, 30);
+    }
   };
 
   if (appState === 'upload') {
@@ -576,7 +584,7 @@ export default function Main() {
                   </div>
                   <div className="pt-4 flex items-center justify-between">
                     <span className="text-[10px] font-mono text-text-muted truncate max-w-[180px]">
-                      {new URL(bookmark.url).hostname}
+                      {getHostname(bookmark.url)}
                     </span>
                   </div>
                 </motion.div>

@@ -25,20 +25,27 @@ chrome.bookmarks.onCreated.addListener(async (id, bookmark) => {
 
   const folders: Folder[] = [];
   // Map folder names to IDs for easier lookup if AI uses names
-  const folderNameMap: Record<string, string> = {};
+  // Use array to store multiple IDs for the same name
+  const folderNameMap: Record<string, string[]> = {};
 
   const traverse = (node: chrome.bookmarks.BookmarkTreeNode, parentId?: string) => {
-    // Only collect folders
+    // Collect folders first
     if (!node.url && node.id !== "0") {
         folders.push({
             id: node.id,
             name: node.title,
             parentId: parentId
         });
-        folderNameMap[node.title] = node.id;
-        if (node.children) {
-            node.children.forEach(child => traverse(child, node.id === "0" ? undefined : node.id));
+
+        if (!folderNameMap[node.title]) {
+            folderNameMap[node.title] = [];
         }
+        folderNameMap[node.title].push(node.id);
+    }
+
+    // Always traverse children, even if node.id is "0" (root)
+    if (node.children) {
+        node.children.forEach(child => traverse(child, node.id === "0" ? undefined : node.id));
     }
   };
   tree.forEach(node => traverse(node));
@@ -72,23 +79,29 @@ chrome.bookmarks.onCreated.addListener(async (id, bookmark) => {
             const { bookmarkIds, targetFolderId } = action.payload;
 
             // Resolve targetFolderId: might be an ID, or a name of a just-created folder, or a name of an existing folder
-            let resolvedTargetId = targetFolderId;
+            let resolvedTargetId: string | undefined = targetFolderId;
 
             if (createdFolders[targetFolderId]) {
                 resolvedTargetId = createdFolders[targetFolderId];
             } else if (folderNameMap[targetFolderId]) {
-                resolvedTargetId = folderNameMap[targetFolderId];
+                const ids = folderNameMap[targetFolderId];
+                if (ids.length === 1) {
+                    resolvedTargetId = ids[0];
+                } else {
+                    console.warn(`Ambiguous folder name "${targetFolderId}" found multiple times: ${ids.join(", ")}. Using the first one.`);
+                    resolvedTargetId = ids[0];
+                }
             }
 
-            if (bookmarkIds.includes(bookmark.id)) {
-                // Check if target exists (simple check: valid ID usually numeric)
-                // chrome.bookmarks.move will throw if ID is invalid.
+            if (bookmarkIds.includes(bookmark.id) && resolvedTargetId) {
                 try {
                     await chrome.bookmarks.move(bookmark.id, { parentId: resolvedTargetId });
                     console.log(`Moved bookmark ${bookmark.title} to folder ${resolvedTargetId}`);
                 } catch (e) {
                     console.error(`Failed to move bookmark to ${resolvedTargetId}: ${e}`);
                 }
+            } else {
+                console.warn(`Could not resolve target folder ID for "${targetFolderId}" or bookmark ID not found.`);
             }
         }
     });

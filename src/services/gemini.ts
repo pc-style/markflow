@@ -125,8 +125,15 @@ export async function processCommand(
   apiKey: string,
   library: BookmarkLibrary,
   command: string,
-  onUpdate: (action: { type: string; payload: any }) => void
-) {
+  onUpdate: (action: { type: string; payload: any }) => Promise<void> | void,
+  depth: number = 0,
+  maxDepth: number = 3
+): Promise<string | undefined> {
+  if (depth >= maxDepth) {
+      console.warn("processCommand: Recursion depth limit reached.");
+      return "I'm unable to process this request further due to safety limits.";
+  }
+
   const ai = new GoogleGenAI({ apiKey });
 
   const response = await ai.models.generateContent({
@@ -153,9 +160,9 @@ export async function processCommand(
   if (calls) {
     for (const call of calls) {
       if (call.name === "move_bookmarks") {
-        onUpdate({ type: "MOVE_BOOKMARKS", payload: call.args });
+        await onUpdate({ type: "MOVE_BOOKMARKS", payload: call.args });
       } else if (call.name === "create_folder") {
-        onUpdate({ type: "CREATE_FOLDER", payload: call.args });
+        await onUpdate({ type: "CREATE_FOLDER", payload: call.args });
       } else if (call.name === "search_web_context") {
         // For search, we'd call the SEARCH model and feed back
         const searchRes = await ai.models.generateContent({
@@ -164,7 +171,7 @@ export async function processCommand(
           config: { tools: [{ googleSearch: {} }] }
         });
         // Recursively call with search results
-        return processCommand(apiKey, library, `Based on this search info: "${searchRes.text}", proceed with the user's original request: "${command}"`, onUpdate);
+        return processCommand(apiKey, library, `Based on this search info: "${searchRes.text}", proceed with the user's original request: "${command}"`, onUpdate, depth + 1, maxDepth);
       }
     }
   }
