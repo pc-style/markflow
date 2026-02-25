@@ -30,19 +30,53 @@ export function parseBookmarksHTML(html: string): BookmarkLibrary {
   const bookmarks: Bookmark[] = [];
   const folders: Folder[] = [];
   
-  // Basic parsing logic - simplified for demo
-  // In a real app, this would need robust recursive traversing
-  const links = doc.querySelectorAll('a');
-  links.forEach(link => {
+  // Recursive parser for Netscape format
+  const processNode = (node: Element, currentFolderId?: string) => {
+    // Process links (bookmarks) in the current DL
+    const links = node.querySelectorAll(':scope > dt > a');
+    links.forEach(link => {
       bookmarks.push({
-          id: Math.random().toString(36).substr(2, 9),
-          title: link.textContent || 'Untitled',
-          url: link.getAttribute('href') || '',
-          addDate: link.getAttribute('add_date') || undefined,
-          icon: link.getAttribute('icon') || undefined,
-          folder: undefined // Flat for now unless we traverse DL/DT structure
+        id: Math.random().toString(36).substr(2, 9),
+        title: link.textContent || 'Untitled',
+        url: link.getAttribute('href') || '',
+        addDate: link.getAttribute('add_date') || undefined,
+        icon: link.getAttribute('icon') || undefined,
+        folder: currentFolderId
       });
-  });
+    });
+
+    // Process folders (H3 tags)
+    const folderNodes = node.querySelectorAll(':scope > dt > h3');
+    folderNodes.forEach(h3 => {
+      const folderId = Math.random().toString(36).substr(2, 9);
+      folders.push({
+        id: folderId,
+        name: h3.textContent || 'New Folder',
+        parentId: currentFolderId
+      });
+
+      // Look for the DL following the H3 which contains the folder's children
+      const nextDl = h3.parentElement?.querySelector('dl');
+      if (nextDl) {
+        processNode(nextDl, folderId);
+      }
+    });
+  };
+
+  const rootDl = doc.querySelector('dl');
+  if (rootDl) {
+    processNode(rootDl);
+  } else {
+    // Fallback for flat lists or just links if no DL structure is found
+    doc.querySelectorAll('a').forEach(link => {
+      bookmarks.push({
+        id: Math.random().toString(36).substr(2, 9),
+        title: link.textContent || 'Untitled',
+        url: link.getAttribute('href') || '',
+        folder: undefined
+      });
+    });
+  }
 
   return { bookmarks, folders };
 }
